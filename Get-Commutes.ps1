@@ -1,10 +1,39 @@
+<#
+.SYNOPSIS
+Returns a best estimate for the travel time between two points at peak commute hours
+
+.DESCRIPTION
+Uses Google's Distance Matrix API to get a best estimate for how long it would take to get to City from House assuming you wanted to get there by 9am on the next Monday.
+Then uses the same API to find out how long it would take to get from City to House assuming you left City at 5pm on a Friday.
+The estimates are designed to be as close to worst case as possible.  
+
+.PARAMETER Cities
+Allows you to specify your destination cities.  If not used it will use a list of demo cities.
+
+.PARAMETER ApiKey
+Your ApiKey from Google.  Make sure to enable the Distance Matrix API for your apikey or else this will error out.
+
+.PARAMETER House
+Allows you to specify your house location. If not used it will use a demo house.
+
+.PARAMETER v
+Verbosity switch that will allow you to see a lot more information.  Use only if you are debugging or else you will get flooded.
+
+.EXAMPLE
+PS> Get-Commutes -Cities "Chantilly VA","Washington DC" -House "College Park MD" -ApiKey "abcdefghijklmnopqrstuvwxyz" -v
+File.txt
+
+.LINK
+https://github.com/picnicsecurity/Get-Commutes
+
+#>
 function Get-Commutes {
     
     param(
-        [string[]]$Cities,
-        [string]$House,
-        [string]$ApiKey,
-        [switch]$v
+        [Parameter(Mandatory=$false)][string[]]$Cities,
+        [Parameter(Mandatory=$false)][string]$House,
+        [Parameter(Mandatory=$true)][string]$ApiKey,
+        [Parameter(Mandatory=$false)][switch]$v
     )
 
     # In case we want to see what is going with the api calls for debugging
@@ -14,8 +43,12 @@ function Get-Commutes {
         $Global:VerbosePreference = 'SilentlyContinue'
     }
 
-    # Setting our URL
-    $base_url = 'https://maps.googleapis.com/maps/api/distancematrix/json'
+    <# ############################# #>
+     #     Setting Everything Up     #
+    <# ############################# #> 
+
+    # Setting our URL and Arraylist
+    $base_url = 'https://maps.googleapis.com/maps/api/distancematrix/json' # Note this does not need to be json but it is setup to handle it
     $masterList = New-Object System.Collections.ArrayList
 
     # We can use a base list of cities as a demo or we can take in a list of cities and just check to make sure they are formatted correctly
@@ -53,7 +86,7 @@ function Get-Commutes {
             "College+Park+MD"
         )
     } else {
-        # Not the best but eh it works
+    	# We need to ensure that the cities passed in have no spaces
         $tmp = @()
         $Cities | ForEach-Object {
             $tmp += [string]$($_.ToString().Replace(' ','+'))
@@ -64,15 +97,15 @@ function Get-Commutes {
     if(!$House){
         $House = "College+Park+MD"
     } else {
+    	# Same deal with the cities above
         $House = $House.Replace(' ','+')
     }
     
     <# ############################# #>
+     #      Setting Up The Days      #
     <# ############################# #> 
-
-    # Arrival and Departure Times
-    ## Note these need to be in GMT/UTC so in order to do that, we will fast forward our date to the nearest Friday and Monday respectively
     
+    ## Note these need to be in GMT/UTC and we also want them to be on the right days 
     switch ($(Get-Date -UFormat %u)) {
         1 { [int]$toMonday = 7; [int]$toFriday = 4; } # Monday
         2 { [int]$toMonday = 6; [int]$toFriday = 3; } # Tuesday
@@ -82,14 +115,16 @@ function Get-Commutes {
         6 { [int]$toMonday = 2; [int]$toFriday = 6; } # Saturday 
         7 { [int]$toMonday = 1; [int]$toFriday = 5; } # Sunday
     }
-
+    
+    # Our first api call will be to see what time we should depart at in the morning
+    # Setting arrival time in the api does not allow us to use the pessimistic traffic model and thus is not getting us a good estimate of the worst case
+    # So we just make a 2nd api call but set our depart time to be 9:00am - time to destination from 1rst api 
     $arrivalTime = Get-Date -Date $(Get-Date -Date 9:00am).AddDays($toMonday) -UFormat %s
     $departureTime = Get-Date -Date $(Get-Date -Date 5:00pm).AddDays($toFriday) -UFormat %s
 
     <# ############################# #>
+     #       Static Parameters       #
     <# ############################# #>
-
-    <# static parameters #>
     $apikey = 'key=$ApiKey'
     $units = "units=imperial"
     $mode = "mode=driving"
@@ -98,16 +133,14 @@ function Get-Commutes {
     $departure = "departure_time=$departureTime"
 
     <# ############################# #>
+     #  Looping through the Cities   #
     <# ############################# #>
 
     $Cities | ForEach-Object {
 
-        <# variable parameters #>
+        # Variable Parameters
         $destinations = "destinations=$($_)"
         $origins = "origins=$House"
-
-        <# ############################# #>
-        <# ############################# #>
 
         # temporary api call to destination 
         $params = @($origins,$destinations,$arrival,$units,$mode,$apikey) -join "&"
@@ -139,9 +172,8 @@ function Get-Commutes {
             }
         }
         $minutesTo = "$time mins"
+	# Now we set our departure time to be what our arrival time told us it should be so that we can access the traffic model api 
         $departureToTime = "departure_time=$(Get-Date -Date $($(Get-Date 9:00am).AddMinutes(0-[int]$($minutesTo.Split(' ')[0])).AddDays($toMonday)) -UFormat %s)"
-
-        # Now we can use departure time to get a better estimate of our commute to our destination
         
         # final api call to destination 
         $params = @($origins,$destinations,$departureToTime,$units,$mode,$traffic_model,$apikey) -join "&"
@@ -175,6 +207,7 @@ function Get-Commutes {
         $minutesTo = "$time mins"
 
         <# ############################# #>
+	 #      Coming Home Times        # 
         <# ############################# #>
 
         # api call from destination
@@ -213,6 +246,7 @@ function Get-Commutes {
         $minutesFrom = "$time mins"
 
         <# ############################# #>
+	 #      Creating our object      #
         <# ############################# #>
 
         # Creating temporary object to be stored in arraylist
@@ -223,7 +257,8 @@ function Get-Commutes {
         $objectProperties.Add("Leave At 5pm",$minutesFrom)
         $objectProperties.Add("Get Home By",$($(Get-Date 5:00pm).AddMinutes([int]$($minutesFrom.Split(' ')[0])).ToString("hh:mm")))
         $object = New-Object -TypeName PSObject -Property $objectProperties
-    
+     	
+	# Adding our object to our Arraylist
         $masterList.Add($object) | Out-Null
 
     }
