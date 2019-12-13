@@ -1,10 +1,39 @@
+<#
+.SYNOPSIS
+Returns a best estimate for the travel time between two points at peak commute hours
+
+.DESCRIPTION
+Uses Google's Distance Matrix API to get a best estimate for how long it would take to get to City from House assuming you wanted to get there by 9am on the next Monday.
+Then uses the same API to find out how long it would take to get from City to House assuming you left City at 5pm on a Friday.
+The estimates are designed to be as close to worst case as possible.  
+
+.PARAMETER Cities
+Allows you to specify your destination cities.  If not used it will use a list of demo cities.
+
+.PARAMETER ApiKey
+Your ApiKey from Google.  Make sure to enable the Distance Matrix API for your apikey or else this will error out.
+
+.PARAMETER House
+Allows you to specify your house location. If not used it will use a demo house.
+
+.PARAMETER v
+Verbosity switch that will allow you to see a lot more information.  Use only if you are debugging or else you will get flooded.
+
+.EXAMPLE
+PS> Get-Commutes -Cities "Chantilly VA","Washington DC" -House "College Park MD" -ApiKey "abcdefghijklmnopqrstuvwxyz" -v
+File.txt
+
+.LINK
+https://github.com/picnicsecurity/Get-Commutes
+
+#>
 function Get-Commutes {
     
     param(
-        [string[]]$Cities,
-        [string]$House,
-        [string]$ApiKey,
-        [switch]$v
+        [Parameter(Mandatory=$false)][string[]]$Cities,
+        [Parameter(Mandatory=$false)][string]$House,
+        [Parameter(Mandatory=$true)][string]$ApiKey,
+        [Parameter(Mandatory=$false)][switch]$v
     )
 
     # In case we want to see what is going with the api calls for debugging
@@ -14,8 +43,12 @@ function Get-Commutes {
         $Global:VerbosePreference = 'SilentlyContinue'
     }
 
-    # Setting our URL
-    $base_url = 'https://maps.googleapis.com/maps/api/distancematrix/json'
+    <# ############################# #>
+     #     Setting Everything Up     #
+    <# ############################# #> 
+
+    # Setting our URL and Arraylist
+    $base_url = 'https://maps.googleapis.com/maps/api/distancematrix/json' # Note this does not need to be json but it is setup to handle it
     $masterList = New-Object System.Collections.ArrayList
 
     # We can use a base list of cities as a demo or we can take in a list of cities and just check to make sure they are formatted correctly
@@ -53,7 +86,7 @@ function Get-Commutes {
             "College+Park+MD"
         )
     } else {
-        # Not the best but eh it works
+    	# We need to ensure that the cities passed in have no spaces
         $tmp = @()
         $Cities | ForEach-Object {
             $tmp += [string]$($_.ToString().Replace(' ','+'))
@@ -64,15 +97,16 @@ function Get-Commutes {
     if(!$House){
         $House = "College+Park+MD"
     } else {
+    	# Same deal with the cities above
         $House = $House.Replace(' ','+')
     }
     
     <# ############################# #>
+     #     Getting Arrival Times     #
     <# ############################# #> 
 
     # Arrival and Departure Times
     ## Note these need to be in GMT/UTC so in order to do that, we will fast forward our date to the nearest Friday and Monday respectively
-    
     switch ($(Get-Date -UFormat %u)) {
         1 { [int]$toMonday = 7; [int]$toFriday = 4; } # Monday
         2 { [int]$toMonday = 6; [int]$toFriday = 3; } # Tuesday
