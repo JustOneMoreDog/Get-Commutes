@@ -102,11 +102,10 @@ function Get-Commutes {
     }
     
     <# ############################# #>
-     #     Getting Arrival Times     #
+     #      Setting Up The Days      #
     <# ############################# #> 
-
-    # Arrival and Departure Times
-    ## Note these need to be in GMT/UTC so in order to do that, we will fast forward our date to the nearest Friday and Monday respectively
+    
+    ## Note these need to be in GMT/UTC and we also want them to be on the right days 
     switch ($(Get-Date -UFormat %u)) {
         1 { [int]$toMonday = 7; [int]$toFriday = 4; } # Monday
         2 { [int]$toMonday = 6; [int]$toFriday = 3; } # Tuesday
@@ -116,14 +115,16 @@ function Get-Commutes {
         6 { [int]$toMonday = 2; [int]$toFriday = 6; } # Saturday 
         7 { [int]$toMonday = 1; [int]$toFriday = 5; } # Sunday
     }
-
+    
+    # Our first api call will be to see what time we should depart at in the morning
+    # Setting arrival time in the api does not allow us to use the pessimistic traffic model and thus is not getting us a good estimate of the worst case
+    # So we just make a 2nd api call but set our depart time to be 9:00am - time to destination from 1rst api 
     $arrivalTime = Get-Date -Date $(Get-Date -Date 9:00am).AddDays($toMonday) -UFormat %s
     $departureTime = Get-Date -Date $(Get-Date -Date 5:00pm).AddDays($toFriday) -UFormat %s
 
     <# ############################# #>
+     #       Static Parameters       #
     <# ############################# #>
-
-    <# static parameters #>
     $apikey = 'key=$ApiKey'
     $units = "units=imperial"
     $mode = "mode=driving"
@@ -132,16 +133,14 @@ function Get-Commutes {
     $departure = "departure_time=$departureTime"
 
     <# ############################# #>
+     #  Looping through the Cities   #
     <# ############################# #>
 
     $Cities | ForEach-Object {
 
-        <# variable parameters #>
+        # Variable Parameters
         $destinations = "destinations=$($_)"
         $origins = "origins=$House"
-
-        <# ############################# #>
-        <# ############################# #>
 
         # temporary api call to destination 
         $params = @($origins,$destinations,$arrival,$units,$mode,$apikey) -join "&"
@@ -173,9 +172,8 @@ function Get-Commutes {
             }
         }
         $minutesTo = "$time mins"
+	# Now we set our departure time to be what our arrival time told us it should be so that we can access the traffic model api 
         $departureToTime = "departure_time=$(Get-Date -Date $($(Get-Date 9:00am).AddMinutes(0-[int]$($minutesTo.Split(' ')[0])).AddDays($toMonday)) -UFormat %s)"
-
-        # Now we can use departure time to get a better estimate of our commute to our destination
         
         # final api call to destination 
         $params = @($origins,$destinations,$departureToTime,$units,$mode,$traffic_model,$apikey) -join "&"
@@ -209,6 +207,7 @@ function Get-Commutes {
         $minutesTo = "$time mins"
 
         <# ############################# #>
+	 #      Coming Home Times        # 
         <# ############################# #>
 
         # api call from destination
@@ -247,6 +246,7 @@ function Get-Commutes {
         $minutesFrom = "$time mins"
 
         <# ############################# #>
+	 #      Creating our object      #
         <# ############################# #>
 
         # Creating temporary object to be stored in arraylist
@@ -257,7 +257,8 @@ function Get-Commutes {
         $objectProperties.Add("Leave At 5pm",$minutesFrom)
         $objectProperties.Add("Get Home By",$($(Get-Date 5:00pm).AddMinutes([int]$($minutesFrom.Split(' ')[0])).ToString("hh:mm")))
         $object = New-Object -TypeName PSObject -Property $objectProperties
-    
+     	
+	# Adding our object to our Arraylist
         $masterList.Add($object) | Out-Null
 
     }
